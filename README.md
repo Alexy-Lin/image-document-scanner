@@ -1,6 +1,6 @@
 # 图片文档扫描工具
 
-一个在本机运行的图片扫描工具。支持手动或自动选择页面四角、透视矫正、纸张背景增强，以及导出多页 PDF。图片处理在本地完成，不需要 LLM API。
+一个使用 PySide6 的 Windows 桌面图片扫描工具。支持手动或自动选择页面四角、透视矫正、纸张背景增强，以及导出多页 PDF。图片处理在本地完成，不需要 LLM API。
 
 ## 功能
 
@@ -12,21 +12,20 @@
 
 ## 快速启动（Windows）
 
-双击 `start.bat`。脚本会在首次运行时创建 `.venv` 并安装依赖，然后启动本地网页。浏览器打开脚本显示的本机地址即可使用。
+双击 `start.bat`。脚本会在首次运行时创建 `.venv` 并安装依赖，然后打开桌面窗口。
 
 也可以在 PowerShell 中手动启动：
 
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m streamlit run app.py
+.\.venv\Scripts\python.exe app.py
 ```
 
 需要 Python 3.10 或更新版本。
 
 ## 项目结构
 
-- `app.py`：Streamlit 界面和处理流程
+- `app.py`：PySide6 桌面界面和处理流程
 - `scanner.py`：图片读取、自动找边、透视矫正、增强和 PDF 编码
-- `components/point_selector/index.html`：手动四角选择组件和辅助线
 - `start.bat`：Windows 环境初始化和启动脚本

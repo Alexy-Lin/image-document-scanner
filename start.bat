@@ -20,7 +20,7 @@ if not exist "%VENV_PYTHON%" (
     if errorlevel 1 goto failed
 )
 
-"%VENV_PYTHON%" -c "import streamlit, cv2, numpy, PIL" >nul 2>nul
+"%VENV_PYTHON%" -c "import PySide6, cv2, numpy, PIL" >nul 2>nul
 if errorlevel 1 (
     echo Installing project dependencies...
     "%VENV_PYTHON%" -m pip install -r "%~dp0requirements.txt"
@@ -28,7 +28,7 @@ if errorlevel 1 (
 )
 
 echo Starting the document scanner...
-"%VENV_PYTHON%" -m streamlit run "%~dp0app.py" %*
+"%VENV_PYTHON%" "%~dp0app.py" %*
 if errorlevel 1 goto failed
 goto finished
 

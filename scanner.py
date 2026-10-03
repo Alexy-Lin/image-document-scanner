@@ -147,7 +147,11 @@ def enhance_document(image_rgb: np.ndarray, options: ScanOptions) -> np.ndarray:
         return image_rgb.copy()
 
     gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
-    kernel_size = _odd(options.background_kernel)
+    min_side = min(gray.shape)
+    # Scale the illumination field with the rectified page dimensions. A fixed
+    # small kernel follows broad phone-camera shadows instead of flattening them.
+    kernel_size = max(_odd(options.background_kernel), _odd(round(min_side * 0.06)))
+    kernel_size = min(kernel_size, _odd(max(3, min_side // 3)))
     # Closing estimates the bright paper background even with uneven lighting.
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
@@ -173,10 +177,14 @@ def enhance_document(image_rgb: np.ndarray, options: ScanOptions) -> np.ndarray:
             )
         return cv2.cvtColor(binary, cv2.COLOR_GRAY2RGB)
 
-    # Pure-white mode uses the normalized luminance to find real content, then
-    # copies the original colour at those pixels so stamps and logos remain.
-    ink = ((background.astype(np.int16) - gray.astype(np.int16)) > options.ink_threshold) | (normalized < 185)
-    ink = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    # Use illumination-normalized darkness for monochrome ink. A raw local
+    # background difference also marks shadow edges, so it must not be used as
+    # an ink mask. Keep saturated marks separately so stamps and logos survive.
+    dark_limit = int(np.clip(205 - options.ink_threshold, 120, 220))
+    dark_ink = normalized < dark_limit
+    hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
+    colored_ink = (hsv[:, :, 1] > 35) & (hsv[:, :, 2] < 250)
+    ink = dark_ink | colored_ink
     output = np.full_like(image_rgb, 255)
     output[ink > 0] = image_rgb[ink > 0]
     return output

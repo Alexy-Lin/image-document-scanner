@@ -37,6 +37,7 @@ class DocumentPage:
     original: np.ndarray
     points: list[tuple[float, float]] | None = None
     processed: np.ndarray | None = None
+    reset_to_original: bool = False
 
     @property
     def name(self) -> str:
@@ -384,6 +385,10 @@ class ScannerWindow(QMainWindow):
         self.process_all_button.setObjectName("primary")
         self.process_all_button.clicked.connect(self._process_all)
         controls.addWidget(self.process_all_button)
+        self.reset_results_button = QPushButton("重置全部为原图")
+        self.reset_results_button.setToolTip("清除本次运行生成的扫描结果；原图、角点和已保存的 PDF 不受影响")
+        self.reset_results_button.clicked.connect(self._reset_results)
+        controls.addWidget(self.reset_results_button)
         self.export_button = QPushButton("保存多页 PDF")
         self.export_button.setToolTip("每个已导入的图片文件对应 PDF 中的一页；未处理页面会先自动处理")
         self.export_button.clicked.connect(self._export_pdf)
@@ -467,8 +472,12 @@ class ScannerWindow(QMainWindow):
             self.points_label.setText("尚未选择角点")
             return
         page = self.pages[row]
-        show_result = self.preview_combo.currentData() == "result" and page.processed is not None
-        if show_result:
+        show_result = self.preview_combo.currentData() == "result"
+        if show_result and page.reset_to_original:
+            self.canvas.set_content(page.original, editable=False)
+            self.points_label.setText("已重置为原图")
+            return
+        if show_result and page.processed is not None:
             self.canvas.set_content(page.processed, editable=False)
         else:
             self.canvas.set_content(page.original, page.points, editable=True)
@@ -479,7 +488,11 @@ class ScannerWindow(QMainWindow):
         row = self.page_list.currentRow()
         if row < 0:
             return
-        self.pages[row].points = [(float(x), float(y)) for x, y in points]
+        page = self.pages[row]
+        page.points = [(float(x), float(y)) for x, y in points]
+        page.processed = None
+        page.reset_to_original = False
+        self._update_page_label(row)
         count = len(points)
         self.points_label.setText(f"已选 {count}/4 个角点" if count else "尚未选择角点")
         if count == 4:
@@ -496,6 +509,9 @@ class ScannerWindow(QMainWindow):
             QMessageBox.information(self, "未找到页面边缘", "没有检测到可靠的四边形，请手动点击页面四角。")
             return
         page.points = [(float(x), float(y)) for x, y in corners]
+        page.processed = None
+        page.reset_to_original = False
+        self._update_page_label(row)
         self._refresh_current_page()
         self.statusBar().showMessage("已检测到页面边缘，可拖动蓝色控制点微调", 5000)
         self._update_actions()
@@ -505,7 +521,31 @@ class ScannerWindow(QMainWindow):
         if row < 0:
             return
         self.pages[row].points = []
+        self.pages[row].processed = None
+        self.pages[row].reset_to_original = False
+        self._update_page_label(row)
         self._refresh_current_page()
+        self._update_actions()
+
+    def _reset_results(self) -> None:
+        if not any(page.processed is not None for page in self.pages):
+            return
+        answer = QMessageBox.question(
+            self,
+            "重置扫描结果",
+            "将所有已导入页面恢复为原图状态并清除扫描结果。原图和角点会保留，已保存到磁盘的 PDF 不会改变。继续吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for index, page in enumerate(self.pages):
+            page.processed = None
+            page.reset_to_original = True
+            self._update_page_label(index)
+        self.preview_combo.setCurrentIndex(1)
+        self._refresh_current_page()
+        self.statusBar().showMessage("所有页面已重置为原图", 5000)
         self._update_actions()
 
     def _process_current(self) -> None:
@@ -571,7 +611,8 @@ class ScannerWindow(QMainWindow):
     def _processing_done(self, results: dict[int, np.ndarray]) -> None:
         for index, result in results.items():
             self.pages[index].processed = result
-            self.page_list.item(index).setText(f"{self.pages[index].name}  ✓")
+            self.pages[index].reset_to_original = False
+            self._update_page_label(index)
         self._set_busy(False)
         self.preview_combo.setCurrentIndex(1)
         self._refresh_current_page()
@@ -603,6 +644,7 @@ class ScannerWindow(QMainWindow):
             self.reset_points_button,
             self.process_current_button,
             self.process_all_button,
+            self.reset_results_button,
             self.export_button,
         ):
             button.setEnabled(not busy)
@@ -627,7 +669,18 @@ class ScannerWindow(QMainWindow):
             self.reset_points_button.setEnabled(has_page and bool(self.pages[row].points))
             self.process_current_button.setEnabled(has_page)
             self.process_all_button.setEnabled(bool(self.pages))
+            self.reset_results_button.setEnabled(any(page.processed is not None for page in self.pages))
             self.export_button.setEnabled(bool(self.pages))
+
+    def _update_page_label(self, index: int) -> None:
+        page = self.pages[index]
+        if page.reset_to_original:
+            label = f"{page.name}  ↺ 原图"
+        elif page.processed is not None:
+            label = f"{page.name}  ✓"
+        else:
+            label = page.name
+        self.page_list.item(index).setText(label)
 
     def _export_pdf(self) -> None:
         if not self.pages:
@@ -642,9 +695,14 @@ class ScannerWindow(QMainWindow):
             return
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
-        if any(page.processed is None for page in self.pages):
+        to_process = [
+            index
+            for index, page in enumerate(self.pages)
+            if page.processed is None and not page.reset_to_original
+        ]
+        if to_process:
             self._pending_export_path = path
-            if not self._start_processing(list(range(len(self.pages)))):
+            if not self._start_processing(to_process):
                 self._pending_export_path = None
             return
         self._write_pdf(path)

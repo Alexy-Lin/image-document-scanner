@@ -238,6 +238,7 @@ class ScannerWindow(QMainWindow):
         self.pages: list[DocumentPage] = []
         self._thread: QThread | None = None
         self._worker: ProcessingWorker | None = None
+        self._pending_export_path: str | None = None
         self._build_ui()
         self._update_actions()
 
@@ -376,6 +377,7 @@ class ScannerWindow(QMainWindow):
         self.process_all_button.clicked.connect(self._process_all)
         controls.addWidget(self.process_all_button)
         self.export_button = QPushButton("保存多页 PDF")
+        self.export_button.setToolTip("每个已导入的图片文件对应 PDF 中的一页；未处理页面会先自动处理")
         self.export_button.clicked.connect(self._export_pdf)
         controls.addWidget(self.export_button)
         controls.addStretch(1)
@@ -506,9 +508,9 @@ class ScannerWindow(QMainWindow):
     def _process_all(self) -> None:
         self._start_processing(list(range(len(self.pages))))
 
-    def _start_processing(self, indices: list[int]) -> None:
+    def _start_processing(self, indices: list[int]) -> bool:
         if not indices:
-            return
+            return False
         jobs = []
         missing: list[str] = []
         for index in indices:
@@ -528,7 +530,7 @@ class ScannerWindow(QMainWindow):
                 "以下页面没有检测到边缘，请先手动选择四角：\n" + "\n".join(missing),
             )
             self._refresh_current_page()
-            return
+            return False
 
         options = ScanOptions(
             mode=self.mode_combo.currentText(),
@@ -551,6 +553,7 @@ class ScannerWindow(QMainWindow):
         self._thread.finished.connect(self._thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
+        return True
 
     def _processing_progress(self, current: int, total: int, name: str) -> None:
         self.progress.setValue(current)
@@ -565,8 +568,13 @@ class ScannerWindow(QMainWindow):
         self._refresh_current_page()
         self.statusBar().showMessage(f"已完成 {len(results)} 页处理", 6000)
         self._update_actions()
+        if self._pending_export_path is not None:
+            path = self._pending_export_path
+            self._pending_export_path = None
+            self._write_pdf(path)
 
     def _processing_failed(self, message: str) -> None:
+        self._pending_export_path = None
         self._set_busy(False)
         self.statusBar().showMessage("处理失败", 5000)
         QMessageBox.critical(self, "处理失败", message)
@@ -610,11 +618,10 @@ class ScannerWindow(QMainWindow):
             self.reset_points_button.setEnabled(has_page and bool(self.pages[row].points))
             self.process_current_button.setEnabled(has_page)
             self.process_all_button.setEnabled(bool(self.pages))
-            self.export_button.setEnabled(any(page.processed is not None for page in self.pages))
+            self.export_button.setEnabled(bool(self.pages))
 
     def _export_pdf(self) -> None:
-        processed_pages = [page for page in self.pages if page.processed is not None]
-        if not processed_pages:
+        if not self.pages:
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -626,16 +633,27 @@ class ScannerWindow(QMainWindow):
             return
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
+        if any(page.processed is None for page in self.pages):
+            self._pending_export_path = path
+            if not self._start_processing(list(range(len(self.pages)))):
+                self._pending_export_path = None
+            return
+        self._write_pdf(path)
+
+    def _write_pdf(self, path: str) -> None:
         try:
             content = make_pdf(
-                (page.processed for page in processed_pages if page.processed is not None),
+                (
+                    page.processed if page.processed is not None else page.original
+                    for page in self.pages
+                ),
                 dpi=int(self.dpi_combo.currentText()),
             )
             Path(path).write_bytes(content)
         except Exception as exc:
             QMessageBox.critical(self, "PDF 保存失败", str(exc))
             return
-        self.statusBar().showMessage(f"已保存 {len(processed_pages)} 页：{path}", 8000)
+        self.statusBar().showMessage(f"已保存 {len(self.pages)} 页（一张源图片对应一页）：{path}", 8000)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt event override
         if self._thread is not None and self._thread.isRunning():

@@ -328,6 +328,14 @@ class ScannerWindow(QMainWindow):
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["纯白文档", "保真彩色", "灰度", "黑白"])
         settings_form.addRow("输出模式", self.mode_combo)
+        self.shadow_combo = QComboBox()
+        self.shadow_combo.addItems(["轻度", "标准", "强力"])
+        self.shadow_combo.setCurrentText("标准")
+        self.shadow_combo.setToolTip("强力模式会更积极地提白背景，浅灰色文字可能变淡")
+        self.mode_combo.currentTextChanged.connect(
+            lambda mode: self.shadow_combo.setEnabled(mode != "保真彩色")
+        )
+        settings_form.addRow("去阴影力度", self.shadow_combo)
         self.dpi_combo = QComboBox()
         self.dpi_combo.addItems(["150", "200", "300"])
         self.dpi_combo.setCurrentText("200")
@@ -534,6 +542,7 @@ class ScannerWindow(QMainWindow):
 
         options = ScanOptions(
             mode=self.mode_combo.currentText(),
+            shadow_strength=self.shadow_combo.currentText(),
             background_kernel=self.background_slider.value(),
             ink_threshold=self.ink_slider.value(),
         )

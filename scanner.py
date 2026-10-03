@@ -20,6 +20,7 @@ class ScanOptions:
     """User-facing processing options."""
 
     mode: str = "纯白文档"
+    shadow_strength: str = "标准"
     background_kernel: int = 51
     ink_threshold: int = 18
     bw_threshold: int = 0
@@ -148,9 +149,18 @@ def enhance_document(image_rgb: np.ndarray, options: ScanOptions) -> np.ndarray:
 
     gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
     min_side = min(gray.shape)
+    strength_profiles = {
+        "轻度": (0.04, 15),
+        "标准": (0.06, 0),
+        "强力": (0.10, -20),
+    }
+    kernel_scale, threshold_adjustment = strength_profiles.get(
+        options.shadow_strength,
+        strength_profiles["标准"],
+    )
     # Scale the illumination field with the rectified page dimensions. A fixed
     # small kernel follows broad phone-camera shadows instead of flattening them.
-    kernel_size = max(_odd(options.background_kernel), _odd(round(min_side * 0.06)))
+    kernel_size = max(_odd(options.background_kernel), _odd(round(min_side * kernel_scale)))
     kernel_size = min(kernel_size, _odd(max(3, min_side // 3)))
     # Closing estimates the bright paper background even with uneven lighting.
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
@@ -180,7 +190,7 @@ def enhance_document(image_rgb: np.ndarray, options: ScanOptions) -> np.ndarray:
     # Use illumination-normalized darkness for monochrome ink. A raw local
     # background difference also marks shadow edges, so it must not be used as
     # an ink mask. Keep saturated marks separately so stamps and logos survive.
-    dark_limit = int(np.clip(205 - options.ink_threshold, 120, 220))
+    dark_limit = int(np.clip(205 - options.ink_threshold + threshold_adjustment, 120, 220))
     dark_ink = normalized < dark_limit
     hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
     colored_ink = (hsv[:, :, 1] > 35) & (hsv[:, :, 2] < 250)

@@ -58,17 +58,30 @@ def order_points(points: Sequence[Sequence[float]]) -> np.ndarray:
     if pts.shape != (4, 2) or not np.isfinite(pts).all():
         raise ValueError("必须提供恰好四个有效坐标点")
 
-    # Sum/difference ordering is stable for ordinary document photos.
-    ordered = np.zeros((4, 2), dtype=np.float32)
-    sums = pts.sum(axis=1)
-    diffs = np.diff(pts, axis=1).ravel()
-    ordered[0] = pts[np.argmin(sums)]
-    ordered[2] = pts[np.argmax(sums)]
-    ordered[1] = pts[np.argmin(diffs)]
-    ordered[3] = pts[np.argmax(diffs)]
-
-    if len({tuple(point) for point in ordered}) != 4:
+    if len(np.unique(pts, axis=0)) != 4:
         raise ValueError("四个角点不能重复")
+
+    # Sort cyclically around the center. Unlike the common sum/difference
+    # shortcut, this does not assign the same corner twice for a 45° page.
+    center = pts.mean(axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    ordered = pts[np.argsort(angles)]
+
+    # Start at the visually top-left corner for ordinary pages. When a rotated
+    # page makes that ambiguous (for example, an exact diamond), start at the
+    # topmost of the tied candidates so the order is still deterministic.
+    start = min(
+        range(4),
+        key=lambda index: (
+            float(pts[index, 0] + pts[index, 1]),
+            float(pts[index, 1]),
+            float(pts[index, 0]),
+        ),
+    )
+    start_point = pts[start]
+    start_index = int(np.flatnonzero(np.all(ordered == start_point, axis=1))[0])
+    ordered = np.roll(ordered, -start_index, axis=0)
+
     if _polygon_area(ordered) < 100:
         raise ValueError("四个角点围成的区域太小")
     if not cv2.isContourConvex(ordered.reshape(-1, 1, 2)):
@@ -190,7 +203,9 @@ def enhance_document(image_rgb: np.ndarray, options: ScanOptions) -> np.ndarray:
     # Use illumination-normalized darkness for monochrome ink. A raw local
     # background difference also marks shadow edges, so it must not be used as
     # an ink mask. Keep saturated marks separately so stamps and logos survive.
-    dark_limit = int(np.clip(205 - options.ink_threshold + threshold_adjustment, 120, 220))
+    # A higher user-facing ink-retention value should preserve lighter marks.
+    # Keep the default threshold unchanged (18 -> 187).
+    dark_limit = int(np.clip(169 + options.ink_threshold + threshold_adjustment, 120, 240))
     dark_ink = normalized < dark_limit
     hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
     colored_ink = (hsv[:, :, 1] > 35) & (hsv[:, :, 2] < 250)
@@ -210,12 +225,54 @@ def process_image(
     return enhance_document(perspective_warp(image_rgb, points), options)
 
 
-def make_pdf(images_rgb: Iterable[np.ndarray], dpi: int = 200) -> bytes:
-    """Encode RGB pages as a high-quality multi-page PDF."""
+def make_pdf(
+    images_rgb: Iterable[np.ndarray],
+    dpi: int = 200,
+    page_size: str = "原始比例",
+    page_rotations: Sequence[int] | None = None,
+) -> bytes:
+    """Encode RGB pages as a high-quality multi-page PDF.
+
+    ``page_size`` can preserve each image's physical dimensions or fit every
+    image, without cropping, onto an A4 canvas. ``page_rotations`` contains
+    clockwise quarter-turn rotations for the corresponding pages.
+    """
 
     pages = [rgb_to_pil(image).convert("RGB") for image in images_rgb]
     if not pages:
         raise ValueError("至少需要一页图片")
+    rotations = list(page_rotations) if page_rotations is not None else [0] * len(pages)
+    if len(rotations) != len(pages):
+        raise ValueError("页面旋转角度数量必须与 PDF 页数一致")
+    for index, degrees in enumerate(rotations):
+        if degrees % 90 != 0:
+            raise ValueError("页面旋转角度必须是 90 度的整数倍")
+        rotation = degrees % 360
+        if rotation:
+            transpose = {
+                90: Image.Transpose.ROTATE_270,
+                180: Image.Transpose.ROTATE_180,
+                270: Image.Transpose.ROTATE_90,
+            }[rotation]
+            pages[index] = pages[index].transpose(transpose)
+
+    if page_size == "A4（按页方向）":
+        fitted_pages: list[Image.Image] = []
+        for page in pages:
+            # Honor each page's orientation while preserving standard A4 proportions.
+            if page.width > page.height:
+                a4_size = (round(297 / 25.4 * dpi), round(210 / 25.4 * dpi))
+            else:
+                a4_size = (round(210 / 25.4 * dpi), round(297 / 25.4 * dpi))
+            fitted = ImageOps.contain(page, a4_size, method=Image.Resampling.LANCZOS)
+            canvas = Image.new("RGB", a4_size, "white")
+            offset = ((a4_size[0] - fitted.width) // 2, (a4_size[1] - fitted.height) // 2)
+            canvas.paste(fitted, offset)
+            fitted_pages.append(canvas)
+        pages = fitted_pages
+    elif page_size != "原始比例":
+        raise ValueError(f"不支持的 PDF 页面尺寸：{page_size}")
+
     output = BytesIO()
     pages[0].save(
         output,

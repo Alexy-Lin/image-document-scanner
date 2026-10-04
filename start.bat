@@ -28,15 +28,14 @@ if errorlevel 1 (
 )
 
 echo Starting the document scanner...
-"%VENV_PYTHON%" "%~dp0app.py" %*
+start "" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0app.py" %*
 if errorlevel 1 goto failed
-goto finished
+endlocal
+exit /b 0
 
 :failed
 echo.
 echo Startup failed. Check the message above and try again.
-
-:finished
-echo.
 pause
 endlocal
+exit /b 1

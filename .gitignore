@@ -2,3 +2,6 @@ __pycache__/
 .venv/
 *.py[cod]
 .streamlit/
+build/
+dist/
+*.spec.bak

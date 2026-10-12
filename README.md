@@ -39,3 +39,47 @@ py -3 -m venv .venv
 - `app.py`：PySide6 桌面界面和处理流程
 - `scanner.py`：图片读取、自动找边、透视矫正、增强和 PDF 编码
 - `start.bat`：Windows 环境初始化和启动脚本
+
+---
+
+# Image Document Scanner
+
+A Windows desktop image-scanning tool built with PySide6. It supports manual or automatic page-corner selection, perspective correction, paper-background enhancement, and multi-page PDF export. Image processing runs locally and does not require an LLM API.
+
+## Features
+
+- Import JPG, PNG, WebP, TIFF, and BMP images and process multiple pages in one batch
+- Automatically correct image orientation using EXIF metadata
+- Select page corners manually or try automatic page-edge detection
+- Correct perspective and choose White, Color, Grayscale, or Black and White output
+- Choose Light, Standard, or Strong shadow removal in White mode
+- Adjust the background estimation range; White mode also lets you tune ink preservation to retain lighter gray details
+- Rotate each page by 90°, 180°, or 270°; the rotation is applied to both the processed preview and the exported PDF
+- Export multi-page PDFs at 150, 200, or 300 DPI, with one page per imported image; any pages not yet processed are handled automatically when saving
+- Choose the original aspect ratio or A4 page size; A4 mode selects portrait or landscape based on the rotated page, scales it proportionally, and centers it without cropping
+
+## Quick Start (Windows)
+
+Double-click `start.bat`. On the first run, the script creates a `.venv`, installs the dependencies, and opens the desktop window. The command prompt closes automatically after the interface starts. If an unhandled error occurs, the app will prompt you to check `%LOCALAPPDATA%\ImageDocumentScanner\app.log`.
+
+You can also launch the app manually from PowerShell:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
+```
+
+Python 3.10 or later is required.
+
+## Portable Build (Windows)
+
+The currently maintained portable build is `dist\compat\ImageDocumentScanner-compat.exe`. Copy and run it directly; Python does not need to be installed. This build uses Python 3.12 and PySide6 6.7.3 for broader compatibility. Developers can rebuild it by running `build_exe_compat.bat`.
+
+An internet connection is required to install PyInstaller for the first build. The packaged app does not need an internet connection to run.
+
+## Project Structure
+
+- `app.py`: PySide6 desktop interface and processing workflow
+- `scanner.py`: image loading, automatic page detection, perspective correction, enhancement, and PDF encoding
+- `start.bat`: Windows environment setup and launch script
